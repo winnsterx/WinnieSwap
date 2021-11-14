@@ -1,25 +1,38 @@
 // =================== CS251 DEX Project =================== // 
 //                      Design Document                      //
-//                          Names                            //
+//                          Winnie Xiao                            //
 // ========================================================= //  
 
 1. Explain why adding and removing liquidity to your exchange does not change the exchange rate.
 
-
-# TODO: answer question 1 here
+Exchange rate is equal to eth_reserves/token_reserves or token_reserves/eth_reserves. The ratio would stay constant 
+because the equivalent values of the two assets (as determined by amount * current exchange rate) are being added in and removed. 
+As a result, the k (product of eth_reserves and token_reserves) changes, but not the exchange ratio since the numerator and 
+denominator would increase or decrease based on the equivalent values. 
 
 
 2. Explain your scheme for rewarding liquidity providers and justify the design decisions you made. How does it satisfy requirements (2)-(4) from Section 5?
 
+Upon every swap, a percentage of the sent asset is collected by the contract and distributed to the current set of 
+liquidity providers based on their percentage in the pool. The individual swap fees are recorded in the position struct's 
+feesEth and feesPoo field. And the total amount of swap fees waiting to be reinvested is recorded in the values reinvestEth_reserve 
+and reinvestPoo_reserve. 
 
-# TODO: answer question 2 here
+In the following swap, the above step is repeated and additional steps are taken to ensure prompt reinvestments. 
+If neither reinvestPoo_reserve or reinvestEth_reserve are equal to 0, then the lower value of the two reserves are
+are all reinvested and the equivalent of that limit in the other currency are reinvested into the liquidity pool.
+The feesPoo and feesETH fields in providers' positions are subtracted and the eth and poo fields are added accordingly 
+to reflect such a shift from held swap fees to reinvested swap fees. eth_reserves and token_reserves are updated 
+accordingly to reflect the increase in liquidity pool. This can be seen in the reinvest() function.
 
 
 3. Describe at least one method you used to minimize your exchange contract's gas usage. Why was this method effective?
 
-
-# TODO: answer question 3 here
-
+Instead of transferring the swap fees to individual providers upon the swap fee collection (inside swap()), the transfer happens
+only when the provider is withdrawing their liquidity. This works and significantly decreases gas fees because 
+it is essentially an orderbook system that keeps track of the values using the feesETH and feesPoo fields within the position.
+This eliminates redundant transfer of tokens or eth by enacting the transfers only when it is explicitly desired 
+by the liquidity providers in removeLiquidity().
 
 4. Optional Feedback:
 4a. How much time did you spend on the assignment?

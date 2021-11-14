@@ -21,7 +21,7 @@ contract TokenExchange {
         bool exists;
     }
 
-    address tokenAddr = 0x4Be8f58439A2c2c96873E7d69Cd0F08924e5400C;                              // TODO: Paste token contract address here.
+    address tokenAddr = 0x9Bf3fAE48Dc5250d43C44D49D26575DD2FFcB9c5;                              // TODO: Paste token contract address here.
     Pooh private token = Pooh(tokenAddr);         // TODO: Replace "Token" with your token class.             
 
     // Liquidity pool for the exchange
@@ -161,7 +161,7 @@ contract TokenExchange {
 
     // Function addLiquidity: Adds liquidity given a supply of ETH (sent to the contract as msg.value)
     // You can change the inputs, or the scope of your function, as needed.
-    function addLiquidity(uint max_exchange_rate, uint min_exchange_rate) 
+    function addLiquidity(uint curPrice, uint max_delta, uint min_delta) 
         external 
         payable
     {
@@ -178,6 +178,8 @@ contract TokenExchange {
         require(token.balanceOf(msg.sender) >= amountTokens, "Insufficient tokens for ETH sent.");
 
         // slippages
+        uint max_exchange_rate = curPrice.mul(uint(100).add(max_delta)).div(100);
+        uint min_exchange_rate = curPrice.mul(uint(100).sub(min_delta)).div(100);
         require(priceETH() <= max_exchange_rate, "Slippage exceeds max exchange rate of ETH.");
         require(priceETH() >= min_exchange_rate, "Slippage falls below min exchange rate of ETH.");
 
@@ -200,7 +202,7 @@ contract TokenExchange {
 
     // Function removeLiquidity: Removes liquidity given the desired amount of ETH to remove.
     // You can change the inputs, or the scope of your function, as needed.
-    function removeLiquidity(uint amountETH, uint max_exchange_rate, uint min_exchange_rate, uint amountFeeETH, uint amountFeePoo)
+    function removeLiquidity(uint amountETH, uint curPrice, uint max_delta, uint min_delta, uint amountFeeETH, uint amountFeePoo)
         public 
         payable
     {
@@ -227,6 +229,8 @@ contract TokenExchange {
         require(amountTokens < token_reserves, "Must withdraw token < token supply.");
 
         // slippages
+        uint max_exchange_rate = curPrice.mul(uint(100).add(max_delta)).div(100);
+        uint min_exchange_rate = curPrice.mul(uint(100).sub(min_delta)).div(100);
         require(priceETH() <= max_exchange_rate, "Slippage exceeds max exchange rate of ETH.");
         require(priceETH() >= min_exchange_rate, "Slippage falls below min exchange rate of ETH.");
 
@@ -249,7 +253,7 @@ contract TokenExchange {
 
     // Function removeAllLiquidity: Removes all liquidity that msg.sender is entitled to withdraw
     // You can change the inputs, or the scope of your function, as needed.
-    function removeAllLiquidity(uint max_exchange_rate, uint min_exchange_rate)
+    function removeAllLiquidity(uint curPrice, uint max_delta, uint min_delta)
         external
         payable
     {
@@ -260,7 +264,7 @@ contract TokenExchange {
         */
         require(eth_reserves > 0 && token_reserves > 0, "Insufficient liquidity.");
         uint maxETH = (positions[msg.sender].percent.mul(eth_reserves)).div(multiplier);
-        removeLiquidity(maxETH, max_exchange_rate, min_exchange_rate, positions[msg.sender].feesEth, positions[msg.sender].feesPoo);
+        removeLiquidity(maxETH, curPrice, max_delta, min_delta, positions[msg.sender].feesEth, positions[msg.sender].feesPoo);
     }
 
 
@@ -269,7 +273,7 @@ contract TokenExchange {
         internal
     { 
         for (uint i = 0; i < providers.length; i++) {
-            positions[providers[i]].feesPoo = positions[providers[i]].percent.mul(fees).div(multiplier);
+            positions[providers[i]].feesPoo = positions[providers[i]].feesPoo.add(positions[providers[i]].percent.mul(fees).div(multiplier));
         }
     }
 
@@ -278,7 +282,7 @@ contract TokenExchange {
         internal
     { 
         for (uint i = 0; i < providers.length; i++) {
-            positions[providers[i]].feesEth = positions[providers[i]].percent.mul(fees).div(multiplier);
+            positions[providers[i]].feesEth = positions[providers[i]].feesEth.add(positions[providers[i]].percent.mul(fees).div(multiplier));
         }
     }
 
@@ -298,8 +302,6 @@ contract TokenExchange {
         internal 
     {
         //swap will never happen bc reverted 
-        // require(reinvestEth_reserve > 0, "There is no fees accumulated in ETH");
-        // require(reinvestPoo_reserve > 0, "There is no fees accumulated in POO"); 
         if (reinvestPoo_reserve == 0 || reinvestEth_reserve == 0) {
             return;
         } 
@@ -348,7 +350,7 @@ contract TokenExchange {
 
     // Function swapTokensForETH: Swaps your token with ETH
     // You can change the inputs, or the scope of your function, as needed.
-    function swapTokensForETH(uint amountTokens, uint max_exchange_rate)
+    function swapTokensForETH(uint amountTokens, uint curPrice, uint max_delta)
         external 
         payable
     {
@@ -372,9 +374,10 @@ contract TokenExchange {
         // price is in 1e18 unit
         require(amountTokens > 0, "Insufficient input amount.");
         require(eth_reserves > 0 && token_reserves > 0, "Insufficient liquidity.");
-        require(token.balanceOf(msg.sender) >= amountTokens, "Insufficient tokens in balance.");
+        require(token.balanceOf(msg.sender) >= amountTokens, "Insufficient tokens in your balance.");
 
         // slippages
+        uint max_exchange_rate = curPrice.mul(uint(100).add(max_delta)).div(100);
         require(priceETH() <= max_exchange_rate, "Slippage exceeds max exchange rate of ETH.");
 
         uint amountAfterFee = amountTokens.mul(uint(100).sub(swap_fee_numerator)).div(100);
@@ -406,8 +409,9 @@ contract TokenExchange {
         }
         require(check < (token_reserves.add(eth_reserves).add(1)), "failed the k check");
         
+        k = token_reserves.mul(eth_reserves);
+
         reinvestPoo_reserve = reinvestPoo_reserve.add(fees);
-        
         reinvest();
     }
 
@@ -416,7 +420,7 @@ contract TokenExchange {
     // Function swapETHForTokens: Swaps ETH for your tokens.
     // ETH is sent to contract as msg.value.
     // You can change the inputs, or the scope of your function, as needed.
-    function swapETHForTokens(uint max_exchange_rate)
+    function swapETHForTokens(uint curPrice, uint max_delta)
         external
         payable 
     {
@@ -440,12 +444,11 @@ contract TokenExchange {
         require(eth_reserves > 0 && token_reserves > 0, "Insufficient liquidity.");
 
         // slippage
+        uint max_exchange_rate = curPrice.mul(uint(100).add(max_delta)).div(100);
         require(priceToken() <= max_exchange_rate, "Slippage caused priceToken to exceed max_exchange_rate");
 
         // apply simple pricing rule
-        uint amountSub = uint(100).sub(swap_fee_numerator);
-        uint amountPreDiv = msg.value.mul(amountSub);
-        uint amountAfterFee = amountPreDiv.div(100);
+        uint amountAfterFee = msg.value.mul(uint(100).sub(swap_fee_numerator)).div(100);
         uint numerator = token_reserves.mul(amountAfterFee);
         uint denominator = eth_reserves.add(amountAfterFee);
         uint amountTokens = numerator.div(denominator); 
@@ -473,6 +476,7 @@ contract TokenExchange {
             check = k.sub(check);
         }
         require(check < (token_reserves.add(eth_reserves).add(1)), "failed the k check");
+        k = token_reserves.mul(eth_reserves);
 
         reinvestEth_reserve = reinvestEth_reserve.add(fees);
         reinvest();

@@ -14,7 +14,7 @@ const token_symbol = "POO"; // TODO: replace with symbol for your token
 //         ABIs and Contract Addresses: Paste Your ABIs/Addresses Here
 // =============================================================================
 // TODO: Paste your token contract address and ABI here:
-const token_address = "0x4Be8f58439A2c2c96873E7d69Cd0F08924e5400C";
+const token_address = "0x9Bf3fAE48Dc5250d43C44D49D26575DD2FFcB9c5";
 const token_abi = [
   {
     anonymous: false,
@@ -293,7 +293,7 @@ const token_abi = [
 const token_contract = new web3.eth.Contract(token_abi, token_address);
 
 // TODO: Paste your exchange address and ABI here
-const exchange_address = "0x6c7a8b917261bF449028fe99b91F36f7422913E5";
+const exchange_address = "0x824CebdD7cb0451a938C49e1e1E03a8A459b8862";
 const exchange_abi = [
   {
     inputs: [],
@@ -365,12 +365,17 @@ const exchange_abi = [
     inputs: [
       {
         internalType: "uint256",
-        name: "max_exchange_rate",
+        name: "curPrice",
         type: "uint256",
       },
       {
         internalType: "uint256",
-        name: "min_exchange_rate",
+        name: "max_delta",
+        type: "uint256",
+      },
+      {
+        internalType: "uint256",
+        name: "min_delta",
         type: "uint256",
       },
     ],
@@ -461,12 +466,17 @@ const exchange_abi = [
     inputs: [
       {
         internalType: "uint256",
-        name: "max_exchange_rate",
+        name: "curPrice",
         type: "uint256",
       },
       {
         internalType: "uint256",
-        name: "min_exchange_rate",
+        name: "max_delta",
+        type: "uint256",
+      },
+      {
+        internalType: "uint256",
+        name: "min_delta",
         type: "uint256",
       },
     ],
@@ -484,12 +494,27 @@ const exchange_abi = [
       },
       {
         internalType: "uint256",
-        name: "max_exchange_rate",
+        name: "curPrice",
         type: "uint256",
       },
       {
         internalType: "uint256",
-        name: "min_exchange_rate",
+        name: "max_delta",
+        type: "uint256",
+      },
+      {
+        internalType: "uint256",
+        name: "min_delta",
+        type: "uint256",
+      },
+      {
+        internalType: "uint256",
+        name: "amountFeeETH",
+        type: "uint256",
+      },
+      {
+        internalType: "uint256",
+        name: "amountFeePoo",
         type: "uint256",
       },
     ],
@@ -597,7 +622,12 @@ const exchange_abi = [
     inputs: [
       {
         internalType: "uint256",
-        name: "max_exchange_rate",
+        name: "curPrice",
+        type: "uint256",
+      },
+      {
+        internalType: "uint256",
+        name: "max_delta",
         type: "uint256",
       },
     ],
@@ -615,7 +645,12 @@ const exchange_abi = [
       },
       {
         internalType: "uint256",
-        name: "max_exchange_rate",
+        name: "curPrice",
+        type: "uint256",
+      },
+      {
+        internalType: "uint256",
+        name: "max_delta",
         type: "uint256",
       },
     ],
@@ -661,9 +696,9 @@ async function init() {
     await token_contract.methods
       ._mint(total_supply / 2)
       .send({ from: web3.eth.defaultAccount, gas: 999999 });
-    // await token_contract.methods
-    //   ._disable_mint()
-    //   .send({ from: web3.eth.defaultAccount, gas: 999999 });
+    await token_contract.methods
+      ._disable_mint()
+      .send({ from: web3.eth.defaultAccount, gas: 999999 });
     await token_contract.methods
       .approve(exchange_address, total_supply)
       .send({ from: web3.eth.defaultAccount });
@@ -689,8 +724,8 @@ async function getPoolState() {
   return {
     token_liquidity: liquidity_tokens * 10 ** -18,
     eth_liquidity: liquidity_eth * 10 ** -18,
-    token_eth_rate: liquidity_tokens / liquidity_eth,
-    eth_token_rate: liquidity_eth / liquidity_tokens,
+    token_eth_rate: (liquidity_tokens / liquidity_eth).toFixed(20),
+    eth_token_rate: (liquidity_eth / liquidity_tokens).toFixed(20),
   };
 }
 
@@ -717,25 +752,19 @@ function log(description, obj) {
 /*** ADD LIQUIDITY ***/
 async function addLiquidity(amountEth, maxSlippagePct) {
   /** TODO: ADD YOUR CODE HERE **/
-  let poolState = await getPoolState();
-  let maxExchangeRate =
-    ((poolState["token_eth_rate"] * (100 + parseInt(maxSlippagePct))) / 100) *
-    10 ** 18; // max exchange rate of eth: [1eth = x tokens]
-  let minExchangeRate =
-    ((poolState["token_eth_rate"] * (100 - parseInt(maxSlippagePct))) / 100) *
-    10 ** 18;
+  if (!maxSlippagePct) {
+    maxSlippagePct = 0;
+  }
+  let price = await exchange_contract.methods.priceETH().call();
+  let upperLimit =
+    (amountEth * ((parseInt(price) * (100 + maxSlippagePct)) / 100)) / 10 ** 18;
+  console.log("approved amount:", upperLimit);
   let app = await token_contract.methods
-    .approve(
-      exchange_address,
-      Math.ceil(amountEth * (maxExchangeRate / 10 ** 18)).toString()
-    )
+    .approve(exchange_address, Math.ceil(upperLimit).toString())
     .send({ from: web3.eth.defaultAccount });
 
-  console.log("Max exchange rate: ", maxExchangeRate.toString());
-  console.log("Min exchange rate: ", minExchangeRate.toString());
-
   let res = await exchange_contract.methods
-    .addLiquidity(maxExchangeRate.toString(), minExchangeRate.toString())
+    .addLiquidity(price, maxSlippagePct, maxSlippagePct)
     .send({ from: web3.eth.defaultAccount, value: amountEth, gas: 999999 });
   console.log(res);
 }
@@ -743,37 +772,26 @@ async function addLiquidity(amountEth, maxSlippagePct) {
 /*** REMOVE LIQUIDITY ***/
 async function removeLiquidity(amountEth, maxSlippagePct) {
   /** TODO: ADD YOUR CODE HERE **/
-  let poolState = await getPoolState();
-  let maxExchangeRate =
-    ((poolState["token_eth_rate"] * (100 + parseInt(maxSlippagePct))) / 100) *
-    10 ** 18; // max exchange rate of eth: [1eth = x tokens]
-  let minExchangeRate =
-    ((poolState["token_eth_rate"] * (100 - parseInt(maxSlippagePct))) / 100) *
-    10 ** 18;
-
-  console.log("Max exchange rate: ", maxExchangeRate.toString());
-  console.log("Min exchange rate: ", minExchangeRate.toString());
+  if (!maxSlippagePct) {
+    maxSlippagePct = 0;
+  }
+  let price = await exchange_contract.methods.priceETH().call();
 
   let res = await exchange_contract.methods
-    .removeLiquidity(
-      amountEth,
-      maxExchangeRate.toString(),
-      minExchangeRate.toString(),
-      0,
-      0
-    )
+    .removeLiquidity(amountEth, price, maxSlippagePct, maxSlippagePct, 0, 0)
     .send({ from: web3.eth.defaultAccount, gas: 999999 });
   console.log(res);
 }
 
 async function removeAllLiquidity(maxSlippagePct) {
   /** TODO: ADD YOUR CODE HERE **/
-  let price = await exchange_contract.methods
-    .priceETH()
-    .call({ from: web3.eth.defaultAccount });
+  if (!maxSlippagePct) {
+    maxSlippagePct = 0;
+  }
+  let price = await exchange_contract.methods.priceETH().call();
 
   let res = await exchange_contract.methods
-    .removeAllLiquidity(maxSlippagePct, maxSlippagePct, price)
+    .removeAllLiquidity(price, maxSlippagePct, maxSlippagePct)
     .send({ from: web3.eth.defaultAccount, gas: 999999 });
   console.log(res);
 }
@@ -781,35 +799,30 @@ async function removeAllLiquidity(maxSlippagePct) {
 /*** SWAP ***/
 async function swapTokensForETH(amountToken, maxSlippagePct) {
   /** TODO: ADD YOUR CODE HERE **/
+  if (!maxSlippagePct) {
+    maxSlippagePct = 0;
+  }
+  let price = await exchange_contract.methods.priceETH().call();
+
   let app = await token_contract.methods
     .approve(exchange_address, amountToken)
     .send({ from: web3.eth.defaultAccount });
 
-  let poolState = await getPoolState();
-  let maxExchangeRate =
-    ((poolState["token_eth_rate"] * (100 + parseInt(maxSlippagePct))) / 100) *
-    10 ** 18; // max exchange rate of eth: [1eth = x tokens]
-
-  console.log("Max exchange rate: ", maxExchangeRate.toString());
-
   let res = await exchange_contract.methods
-    .swapTokensForETH(amountToken, maxExchangeRate.toString())
+    .swapTokensForETH(amountToken, price, maxSlippagePct)
     .send({ from: web3.eth.defaultAccount, gas: 999999 });
   console.log(res);
 }
 
 async function swapETHForTokens(amountETH, maxSlippagePct) {
   /** TODO: ADD YOUR CODE HERE **/
-  let poolState = await getPoolState();
-  let maxExchangeRate =
-    ((poolState["eth_token_rate"] * (100 + parseInt(maxSlippagePct))) / 100) *
-    10 ** 18; // max exchange rate of eth: [1 token = x eth]
-
-  console.log("Max exchange rate: ", maxExchangeRate.toString());
-  // alert("pause for slippage test");
+  if (!maxSlippagePct) {
+    maxSlippagePct = 0;
+  }
+  let price = await exchange_contract.methods.priceETH().call();
 
   let res = await exchange_contract.methods
-    .swapETHForTokens(maxExchangeRate.toString())
+    .swapETHForTokens(price, maxSlippagePct)
     .send({ from: web3.eth.defaultAccount, value: amountETH, gas: 999999 });
   console.log(res);
 }
@@ -1072,4 +1085,4 @@ async function sanityCheck() {
 }
 
 // Uncomment this to run when directly opening index.html
-// sanityCheck();
+sanityCheck();
